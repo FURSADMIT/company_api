@@ -1,7 +1,14 @@
+# FastAPI и зависимости
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
+
+# База данных
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
+
+# Утилиты
 python-dotenv==1.0.0
 pydantic==2.4.2
+
+# Для продакшена (опционально)
 gunicorn==21.2.0
