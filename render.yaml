@@ -2,38 +2,28 @@ services:
   - type: web
     name: company-api
     env: python
-    region: frankfurt
     plan: free
-    branch: main
-    rootDirectory: /
-    
-    # Команды сборки
+    region: frankfurt
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
-    
-    # Команда запуска
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    
-    # Переменные окружения
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: DATABASE_URL
-        value: postgresql://user1:Qa_2025!@79.174.88.202:15539/WORK2025
+        fromDatabase:
+          name: companydb
+          property: connectionString
       - key: PORT
         value: 10000
       - key: ENVIRONMENT
         value: production
-    
-    # Настройки здоровья
-    healthCheckPath: /health
-    healthCheckTimeout: 30
-    
-    # Автоматический деплой
-    autoDeploy: true
-    pullRequestPreviewsEnabled: false
-    
-    # Ограничения ресурсов
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
+      - key: RENDER
+        value: true
+
+databases:
+  - name: companydb
+    databaseName: companydb
+    plan: free
+    region: frankfurt
