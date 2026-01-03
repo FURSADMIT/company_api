@@ -753,7 +753,7 @@ async def get_employees(
              422: {"description": "Неверный ID сотрудника"}
          })
 async def get_employee(
-    employee_id: int = Query(..., ge=1, description="ID сотрудника"),
+    employee_id: int,
     db: Session = Depends(get_db)
 ):
     """
@@ -1601,7 +1601,7 @@ async def series_fans(
              502: {"description": "Bad Gateway"},
              503: {"description": "Service Unavailable"}
          })
-async def test_error_endpoint():
+async def test_error_endpoint(
     error_code: int,
     message: Optional[str] = Query(
         None,
@@ -1612,7 +1612,8 @@ async def test_error_endpoint():
         ge=0,
         le=30,
         description="Искусственная задержка в секундах (0-30)"
-    ):
+    )
+):
     """
     Эндпоинт для генерации HTTP ошибок.
     
