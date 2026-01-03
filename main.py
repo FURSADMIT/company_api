@@ -285,10 +285,13 @@ class QueryRequest(BaseModel):
 class HealthResponse(BaseModel):
     """Модель ответа для health check"""
     status: str
-    database: str
+    database: Dict[str, Any]  # Изменено с str на Dict
     timestamp: str
     uptime: str
     version: str
+    
+    class Config:
+        from_attributes = True
 
 class StatsResponse(BaseModel):
     """Модель ответа для статистики"""
@@ -461,7 +464,7 @@ async def health_check(db: Session = Depends(get_db)):
     """
     health_data = {
         "status": "healthy",
-        "database": "connected",
+        "database": {},
         "timestamp": datetime.now().isoformat(),
         "uptime": str(datetime.now() - app_start_time),
         "version": "1.0.0"
@@ -497,19 +500,20 @@ async def health_check(db: Session = Depends(get_db)):
                 largest_count = count
                 largest_table = table
         
+        health_data["database"] = {
+            "status": "CONNECTED",
+            "response_time_ms": round(db_connection_time, 2),
+            "tables_available": len(tables),
+            "available_tables": tables,
+            "sample_counts": stats,
+            "largest_table": {
+                "name": largest_table,
+                "records": largest_count
+            } if largest_table else None
+        }
+        
         health_data.update({
             "status": "✅ HEALTHY",
-            "database": {
-                "status": "CONNECTED",
-                "response_time_ms": round(db_connection_time, 2),
-                "tables_available": len(tables),
-                "available_tables": tables,
-                "sample_counts": stats,
-                "largest_table": {
-                    "name": largest_table,
-                    "records": largest_count
-                } if largest_table else None
-            },
             "api": {
                 "status": "RUNNING",
                 "port": PORT,
@@ -529,13 +533,13 @@ async def health_check(db: Session = Depends(get_db)):
         
     except SQLAlchemyError as e:
         logger.error(f"Health check failed: {str(e)}")
+        health_data["database"] = {
+            "status": "DISCONNECTED",
+            "error": str(e),
+            "connection_string": DATABASE_URL.split('@')[0] + "@***"  # Маскируем пароль
+        }
         health_data.update({
             "status": "❌ UNHEALTHY",
-            "database": {
-                "status": "DISCONNECTED",
-                "error": str(e),
-                "connection_string": DATABASE_URL.split('@')[0] + "@***"  # Маскируем пароль
-            },
             "api": {
                 "status": "RUNNING",
                 "port": PORT,
