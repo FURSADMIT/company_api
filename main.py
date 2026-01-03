@@ -1601,7 +1601,7 @@ async def series_fans(
              502: {"description": "Bad Gateway"},
              503: {"description": "Service Unavailable"}
          })
-async def test_error_endpoint()
+async def test_error_endpoint():
     error_code: int,
     message: Optional[str] = Query(
         None,
