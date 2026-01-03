@@ -1602,7 +1602,11 @@ async def series_fans(
              503: {"description": "Service Unavailable"}
          })
 async def test_error_endpoint():
-    raise HTTPException(status_code=500, detail="Тестовая ошибка"),
+    error_code: int,
+    message: Optional[str] = Query(
+        None,
+        description="Кастомное сообщение об ошибке"
+    ),
     sleep: Optional[int] = Query(
         None,
         ge=0,
