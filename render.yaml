@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: company-api
+    env: python
+    region: frankfurt  # Ближайший к России регион
+    plan: free
+    branch: main
+    
+    # Команды сборки и запуска
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    
+    startCommand: |
+      uvicorn main:app --host 0.0.0.0 --port ${PORT}
+    
+    # Переменные окружения
+    envVars:
+      - key: DATABASE_URL
+        value: postgresql://user1:Qa_2025!@79.174.88.202:15539/WORK2025
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: PORT
+        value: 10000
+    
+    # Автоматическое развертывание
+    autoDeploy: true
+    
+    # Настройки здоровья
+    healthCheckPath: /health
+    numInstances: 1
