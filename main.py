@@ -46,11 +46,11 @@ app = FastAPI(
     - Все, кто хочет практиковаться в тестировании REST API
     
     ### 🗄️ Структура базы данных:
-    1. **employees** - сотрудники компании
-    2. **departments** - отделы компании
-    3. **cars** - автомобили сотрудников  
-    4. **series** - сериалы
-    5. **employee_series** - связь сотрудников и сериалов
+    1. **stg_employees** - сотрудники компании
+    2. **stg_departments** - отделы компании
+    3. **stg_cars** - автомобили сотрудников  
+    4. **stg_series** - сериалы
+    5. **stg_employee_series** - связь сотрудников и сериалов
     
     ### 🔗 Технологии:
     - **Backend**: FastAPI (Python 3.10)
@@ -163,7 +163,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],  # Все методы
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=600
@@ -172,9 +172,6 @@ app.add_middleware(
 # ========== ДОПОЛНИТЕЛЬНЫЙ MIDDLEWARE ДЛЯ CORS ==========
 @app.middleware("http")
 async def add_cors_headers(request: Request, call_next):
-    """
-    Middleware для добавления CORS заголовков к каждому ответу.
-    """
     if request.method == "OPTIONS":
         response = JSONResponse(content={"status": "ok"})
     else:
@@ -225,9 +222,6 @@ metadata = MetaData()
 
 # ========== ЗАВИСИМОСТИ ==========
 def get_db():
-    """
-    Зависимость для получения сессии БД.
-    """
     db = SessionLocal()
     try:
         yield db
@@ -244,7 +238,6 @@ def get_db():
 # ========== PYDANTIC МОДЕЛИ ==========
 
 class EmployeeBase(BaseModel):
-    """Базовая модель сотрудника"""
     first_name: str = Field(
         ...,
         min_length=2,
@@ -280,17 +273,14 @@ class EmployeeBase(BaseModel):
     
     @validator('first_name', 'last_name')
     def validate_name(cls, v):
-        """Проверка, что имя/фамилия не содержат цифр"""
         if any(char.isdigit() for char in v):
             raise ValueError('Имя не должно содержать цифры')
         return v.title()
 
 class EmployeeCreate(EmployeeBase):
-    """Модель для создания сотрудника"""
     pass
 
 class EmployeeUpdate(BaseModel):
-    """Модель для обновления сотрудника"""
     first_name: Optional[str] = Field(
         None,
         min_length=2,
@@ -326,13 +316,11 @@ class EmployeeUpdate(BaseModel):
     
     @validator('first_name', 'last_name')
     def validate_name(cls, v):
-        """Проверка, что имя/фамилия не содержат цифр"""
         if v and any(char.isdigit() for char in v):
             raise ValueError('Имя не должно содержать цифры')
         return v.title() if v else v
 
 class EmployeeResponse(EmployeeBase):
-    """Модель ответа для сотрудника"""
     id: int
     created_at: Optional[datetime] = None
     
@@ -343,7 +331,6 @@ class EmployeeResponse(EmployeeBase):
         }
 
 class DepartmentResponse(BaseModel):
-    """Модель ответа для департамента"""
     id: int
     name: str
     
@@ -351,7 +338,6 @@ class DepartmentResponse(BaseModel):
         from_attributes = True
 
 class CarResponse(BaseModel):
-    """Модель ответа для автомобиля"""
     id: int
     brand: str
     model: str
@@ -360,7 +346,6 @@ class CarResponse(BaseModel):
         from_attributes = True
 
 class SeriesResponse(BaseModel):
-    """Модель ответа для сериала"""
     id: int
     title: str
     rating: Optional[float] = None
@@ -369,7 +354,6 @@ class SeriesResponse(BaseModel):
         from_attributes = True
 
 class HealthResponse(BaseModel):
-    """Модель ответа для health check"""
     status: str
     database: Dict[str, Any]
     timestamp: str
@@ -382,7 +366,6 @@ class HealthResponse(BaseModel):
 # ========== MIDDLEWARE ДЛЯ ЛОГГИРОВАНИЯ ==========
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Middleware для логирования всех запросов"""
     start_time = time.time()
     
     logger.info(f"Incoming request: {request.method} {request.url.path}")
@@ -419,9 +402,6 @@ request_count = 0
          summary="Корневая страница API",
          description="Возвращает информацию о API и доступных эндпоинтах")
 async def root():
-    """
-    Корневой эндпоинт API.
-    """
     global request_count
     request_count += 1
     
@@ -463,9 +443,6 @@ async def root():
          summary="Проверка работоспособности",
          description="Полная диагностика состояния API и подключения к БД")
 async def health_check(db: Session = Depends(get_db)):
-    """
-    Comprehensive health check endpoint.
-    """
     health_data = {
         "status": "healthy",
         "database": {},
@@ -557,9 +534,6 @@ async def get_employees(
     sort_order: str = Query("asc", description="Порядок сортировки"),
     db: Session = Depends(get_db)
 ):
-    """
-    Полный эндпоинт для работы с сотрудниками.
-    """
     try:
         valid_sort_fields = ["id", "first_name", "last_name", "position", "department_id"]
         if sort_by not in valid_sort_fields:
@@ -587,9 +561,9 @@ async def get_employees(
                 d.name as department_name,
                 c.brand as car_brand,
                 c.model as car_model
-            FROM employees e
-            LEFT JOIN departments d ON e.department_id = d.id
-            LEFT JOIN cars c ON e.car_id = c.id
+            FROM stg_employees e
+            LEFT JOIN stg_departments d ON e.department_id = d.id
+            LEFT JOIN stg_cars c ON e.car_id = c.id
         """
         
         params = {"limit": per_page, "offset": offset}
@@ -613,7 +587,7 @@ async def get_employees(
         columns = result.keys()
         employees = [dict(zip(columns, row)) for row in result]
         
-        count_sql = "SELECT COUNT(*) FROM employees e"
+        count_sql = "SELECT COUNT(*) FROM stg_employees e"
         if conditions:
             count_sql += " WHERE " + " AND ".join(conditions)
         
@@ -667,9 +641,6 @@ async def get_employee(
     employee_id: int,
     db: Session = Depends(get_db)
 ):
-    """
-    Получение полной информации о конкретном сотруднике.
-    """
     try:
         result = db.execute(text("""
             SELECT 
@@ -690,13 +661,13 @@ async def get_employee(
                         'title', s.title,
                         'rating', s.rating
                     ))
-                    FROM employee_series es
-                    JOIN series s ON es.series_id = s.id
+                    FROM stg_employee_series es
+                    JOIN stg_series s ON es.series_id = s.id
                     WHERE es.employee_id = e.id
                 ) as favorite_series
-            FROM employees e
-            LEFT JOIN departments d ON e.department_id = d.id
-            LEFT JOIN cars c ON e.car_id = c.id
+            FROM stg_employees e
+            LEFT JOIN stg_departments d ON e.department_id = d.id
+            LEFT JOIN stg_cars c ON e.car_id = c.id
             WHERE e.id = :id
         """), {"id": employee_id})
         
@@ -755,12 +726,9 @@ async def create_employee(
     employee: EmployeeCreate,
     db: Session = Depends(get_db)
 ):
-    """
-    Создание нового сотрудника.
-    """
     try:
         department_exists = db.execute(
-            text("SELECT id, name FROM departments WHERE id = :id"),
+            text("SELECT id, name FROM stg_departments WHERE id = :id"),
             {"id": employee.department_id}
         ).fetchone()
         
@@ -776,7 +744,7 @@ async def create_employee(
             )
         
         car_exists = db.execute(
-            text("SELECT id, brand, model FROM cars WHERE id = :id"),
+            text("SELECT id, brand, model FROM stg_cars WHERE id = :id"),
             {"id": employee.car_id}
         ).fetchone()
         
@@ -792,7 +760,7 @@ async def create_employee(
             )
         
         result = db.execute(text("""
-            INSERT INTO employees 
+            INSERT INTO stg_employees 
             (first_name, last_name, position, department_id, car_id)
             VALUES 
             (:first_name, :last_name, :position, :department_id, :car_id)
@@ -862,12 +830,9 @@ async def update_employee(
     employee: EmployeeCreate,
     db: Session = Depends(get_db)
 ):
-    """
-    Полное обновление сотрудника.
-    """
     try:
         department_exists = db.execute(
-            text("SELECT id, name FROM departments WHERE id = :id"),
+            text("SELECT id, name FROM stg_departments WHERE id = :id"),
             {"id": employee.department_id}
         ).fetchone()
         
@@ -881,7 +846,7 @@ async def update_employee(
             )
         
         car_exists = db.execute(
-            text("SELECT id, brand, model FROM cars WHERE id = :id"),
+            text("SELECT id, brand, model FROM stg_cars WHERE id = :id"),
             {"id": employee.car_id}
         ).fetchone()
         
@@ -895,7 +860,7 @@ async def update_employee(
             )
         
         result = db.execute(text("""
-            UPDATE employees 
+            UPDATE stg_employees 
             SET first_name = :first_name,
                 last_name = :last_name,
                 position = :position,
@@ -968,9 +933,6 @@ async def partial_update_employee(
     employee_update: EmployeeUpdate,
     db: Session = Depends(get_db)
 ):
-    """
-    Частичное обновление сотрудника.
-    """
     try:
         update_data = employee_update.dict(exclude_unset=True)
         
@@ -982,7 +944,7 @@ async def partial_update_employee(
         
         if 'department_id' in update_data:
             department_exists = db.execute(
-                text("SELECT id FROM departments WHERE id = :id"),
+                text("SELECT id FROM stg_departments WHERE id = :id"),
                 {"id": update_data['department_id']}
             ).fetchone()
             
@@ -997,7 +959,7 @@ async def partial_update_employee(
         
         if 'car_id' in update_data:
             car_exists = db.execute(
-                text("SELECT id FROM cars WHERE id = :id"),
+                text("SELECT id FROM stg_cars WHERE id = :id"),
                 {"id": update_data['car_id']}
             ).fetchone()
             
@@ -1025,7 +987,7 @@ async def partial_update_employee(
             )
         
         sql = f"""
-            UPDATE employees 
+            UPDATE stg_employees 
             SET {', '.join(set_clauses)}
             WHERE id = :id
             RETURNING 
@@ -1093,16 +1055,13 @@ async def delete_employee(
     employee_id: int,
     db: Session = Depends(get_db)
 ):
-    """
-    Удаление сотрудника по ID.
-    """
     try:
         employee_info = db.execute(
             text("""
                 SELECT e.first_name, e.last_name, e.position,
                        d.name as department_name
-                FROM employees e
-                LEFT JOIN departments d ON e.department_id = d.id
+                FROM stg_employees e
+                LEFT JOIN stg_departments d ON e.department_id = d.id
                 WHERE e.id = :id
             """),
             {"id": employee_id}
@@ -1120,12 +1079,12 @@ async def delete_employee(
             )
         
         db.execute(
-            text("DELETE FROM employee_series WHERE employee_id = :id"),
+            text("DELETE FROM stg_employee_series WHERE employee_id = :id"),
             {"id": employee_id}
         )
         
         result = db.execute(
-            text("DELETE FROM employees WHERE id = :id RETURNING id"),
+            text("DELETE FROM stg_employees WHERE id = :id RETURNING id"),
             {"id": employee_id}
         )
         
@@ -1165,6 +1124,53 @@ async def delete_employee(
             detail="Internal server error"
         )
 
+# ========== ЭНДПОИНТЫ ДЛЯ ДРУГИХ ТАБЛИЦ ==========
+
+@app.get("/departments",
+         tags=["🏢 Департаменты"],
+         summary="Получить список департаментов")
+async def get_departments(db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("SELECT id, name FROM stg_departments ORDER BY id"))
+        departments = [{"id": row[0], "name": row[1]} for row in result]
+        return {"data": departments, "count": len(departments)}
+    except Exception as e:
+        logger.error(f"Error fetching departments: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error while fetching departments"
+        )
+
+@app.get("/cars",
+         tags=["🚗 Автомобили"],
+         summary="Получить список автомобилей")
+async def get_cars(db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("SELECT id, brand, model FROM stg_cars ORDER BY id"))
+        cars = [{"id": row[0], "brand": row[1], "model": row[2]} for row in result]
+        return {"data": cars, "count": len(cars)}
+    except Exception as e:
+        logger.error(f"Error fetching cars: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error while fetching cars"
+        )
+
+@app.get("/series",
+         tags=["📺 Сериалы"],
+         summary="Получить список сериалов")
+async def get_series(db: Session = Depends(get_db)):
+    try:
+        result = db.execute(text("SELECT id, title, rating FROM stg_series ORDER BY id"))
+        series = [{"id": row[0], "title": row[1], "rating": row[2]} for row in result]
+        return {"data": series, "count": len(series)}
+    except Exception as e:
+        logger.error(f"Error fetching series: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error while fetching series"
+        )
+
 # ========== ЭНДПОИНТ ДЛЯ ТЕСТИРОВАНИЯ CORS ==========
 
 @app.get("/test-cors",
@@ -1172,9 +1178,6 @@ async def delete_employee(
          summary="Тест CORS настроек",
          description="Простой эндпоинт для проверки CORS настроек")
 async def test_cors():
-    """
-    Простой эндпоинт для проверки CORS.
-    """
     return {
         "message": "CORS test endpoint",
         "cors_enabled": True,
@@ -1191,9 +1194,6 @@ async def test_cors():
 
 @app.options("/{path:path}")
 async def options_handler(path: str):
-    """
-    Обработчик OPTIONS запросов для CORS.
-    """
     return JSONResponse(
         content={"status": "ok"},
         headers={
@@ -1209,7 +1209,6 @@ async def options_handler(path: str):
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Кастомный обработчик HTTP исключений"""
     logger.warning(f"HTTPException: {exc.status_code} - {exc.detail}")
     
     error_response = {
@@ -1237,7 +1236,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """Обработчик неожиданных исключений"""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
     
     error_response = {
