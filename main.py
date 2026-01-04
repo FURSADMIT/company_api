@@ -32,13 +32,6 @@ app = FastAPI(
     description="""
     ## 🎯 Полнофункциональное REST API для практики тестирования
     
-    ### 🗄️ База данных: PostgreSQL
-    - **Таблица Employees** - сотрудники компании
-    - **Таблица Departments** - отделы компании
-    - **Таблица Cars** - автомобили сотрудников  
-    - **Таблица Series** - сериалы
-    - **Таблица Employee_Series** - связь сотрудников и сериалов
-    
     ### 📚 Возможности API:
     - **Swagger UI** - автоматическая интерактивная документация
     - **Полный CRUD** - создание, чтение, обновление, удаление
@@ -418,11 +411,9 @@ async def root():
             "✅ CORS для всех доменов"
         ],
         "quick_start": {
-            "employees": "GET /employees - список сотрудников",
-            "departments": "GET /departments - список отделов",
-            "cars": "GET /cars - список автомобилей",
-            "series": "GET /series - список сериалов",
-            "health": "GET /health - проверка API"
+            "employees": "GET /test/employees - тестовый список сотрудников",
+            "health": "GET /health - проверка API",
+            "diagnostics": "GET /debug/connection - диагностика БД"
         }
     }
 
@@ -448,20 +439,20 @@ async def health_check(db: Session = Depends(get_db)):
         tables = inspector.get_table_names(schema="public")
         
         stats = {}
-        for table in ['Employees', 'Departments', 'Cars', 'Series']:
+        for table in tables[:10]:  # Проверяем первые 10 таблиц
             try:
-                result = db.execute(text(f'SELECT COUNT(*) FROM "{table}"'))
+                result = db.execute(text(f"SELECT COUNT(*) FROM {table}"))
                 count = result.scalar()
                 stats[table] = count
             except:
-                stats[table] = "not found"
+                stats[table] = "error"
         
         health_data["database"] = {
             "status": "✅ CONNECTED",
             "response_time_ms": round(db_connection_time, 2),
             "tables_available": len(tables),
             "available_tables": tables,
-            "table_counts": stats
+            "sample_counts": stats
         }
         
         health_data.update({
@@ -495,1071 +486,248 @@ async def health_check(db: Session = Depends(get_db)):
     
     return health_data
 
-# ========== ЭНДПОИНТЫ ДЛЯ СОТРУДНИКОВ (CRUD) ==========
+# ========== ДИАГНОСТИЧЕСКИЕ ЭНДПОИНТЫ ==========
 
-@app.get("/employees",
-         response_model=Dict[str, Any],
-         tags=["👥 Сотрудники"],
-         summary="Получить список сотрудников",
-         description="Получение списка сотрудников с пагинацией и фильтрацией")
-async def get_employees(
-    page: int = Query(1, ge=1, description="Номер страницы"),
-    per_page: int = Query(20, ge=1, le=100, description="Количество записей на страницу"),
-    department_id: Optional[int] = Query(None, description="Фильтр по ID департамента"),
-    search: Optional[str] = Query(None, description="Поиск по имени или фамилии"),
-    sort_by: str = Query("id", description="Поле для сортировки"),
-    sort_order: str = Query("asc", description="Порядок сортировки (asc/desc)"),
-    db: Session = Depends(get_db)
-):
+@app.get("/debug/connection",
+         tags=["🔧 Диагностика"],
+         summary="Диагностика подключения к БД")
+async def debug_connection(db: Session = Depends(get_db)):
+    """Показывает подробную информацию о подключении к БД"""
     try:
-        # Валидация параметров сортировки
-        valid_sort_fields = ["id", "first_name", "last_name", "position", "department_id", "car_id"]
-        if sort_by not in valid_sort_fields:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid sort field. Valid options: {', '.join(valid_sort_fields)}"
-            )
-        
-        if sort_order not in ["asc", "desc"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid sort order. Use 'asc' or 'desc'"
-            )
-        
-        offset = (page - 1) * per_page
-        
-        # Основной SQL запрос - используем правильные имена таблиц с кавычками
-        sql = """
-            SELECT 
-                e.id,
-                e.first_name,
-                e.last_name,
-                e.position,
-                e.department_id,
-                e.car_id,
-                d.name as department_name,
-                c.brand as car_brand,
-                c.model as car_model
-            FROM "Employees" e
-            LEFT JOIN "Departments" d ON e.department_id = d.id
-            LEFT JOIN "Cars" c ON e.car_id = c.id
-        """
-        
-        params = {"limit": per_page, "offset": offset}
-        conditions = []
-        
-        if department_id:
-            conditions.append("e.department_id = :dept_id")
-            params["dept_id"] = department_id
-        
-        if search:
-            conditions.append("(e.first_name ILIKE :search OR e.last_name ILIKE :search)")
-            params["search"] = f"%{search}%"
-        
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
-        
-        sql += f" ORDER BY e.{sort_by} {sort_order.upper()}"
-        sql += " LIMIT :limit OFFSET :offset"
-        
-        logger.debug(f"Executing SQL: {sql}")
-        result = db.execute(text(sql), params)
-        columns = result.keys()
-        employees = [dict(zip(columns, row)) for row in result]
-        
-        # Получаем общее количество
-        count_sql = 'SELECT COUNT(*) FROM "Employees" e'
-        if conditions:
-            count_sql += " WHERE " + " AND ".join(conditions)
-        
-        total_count = db.execute(
-            text(count_sql), 
-            {k: v for k, v in params.items() if k in ["dept_id", "search"]}
-        ).scalar() or 0
-        
-        total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
-        
-        return {
-            "meta": {
-                "page": page,
-                "per_page": per_page,
-                "total": total_count,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_prev": page > 1,
-                "sorting": {
-                    "by": sort_by,
-                    "order": sort_order
-                },
-                "filters": {
-                    "department_id": department_id,
-                    "search": search
-                }
-            },
-            "data": employees
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching employees: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error while fetching employees: {str(e)}"
-        )
-
-@app.get("/employees/{employee_id}",
-         response_model=Dict[str, Any],
-         tags=["👥 Сотрудники"],
-         summary="Получить сотрудника по ID",
-         description="Полная информация о сотруднике включая связанные данные")
-async def get_employee(
-    employee_id: int,
-    db: Session = Depends(get_db)
-):
-    try:
+        # Получаем информацию о текущей базе данных
         result = db.execute(text("""
             SELECT 
-                e.id,
-                e.first_name,
-                e.last_name,
-                e.position,
-                e.department_id,
-                e.car_id,
-                d.name as department_name,
-                d.id as department_id,
-                c.brand as car_brand,
-                c.model as car_model,
-                c.id as car_id,
-                (
-                    SELECT json_agg(json_build_object(
-                        'id', s.id,
-                        'title', s.title,
-                        'rating', s.rating
-                    ))
-                    FROM "Employee_Series" es
-                    JOIN "Series" s ON es.series_id = s.id
-                    WHERE es.employee_id = e.id
-                ) as favorite_series
-            FROM "Employees" e
-            LEFT JOIN "Departments" d ON e.department_id = d.id
-            LEFT JOIN "Cars" c ON e.car_id = c.id
-            WHERE e.id = :id
-        """), {"id": employee_id})
+                current_database() as database,
+                current_schema() as schema,
+                current_user as user,
+                inet_server_addr() as server_address,
+                inet_server_port() as server_port,
+                version() as postgres_version
+        """))
         
-        employee = result.fetchone()
+        db_info = dict(zip(result.keys(), result.fetchone()))
         
-        if not employee:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": "Employee not found",
-                    "employee_id": employee_id,
-                    "message": f"Сотрудник с ID {employee_id} не существует",
-                    "suggestion": "Проверьте ID или получите список всех сотрудников: GET /employees"
+        # Получаем все таблицы во всех схемах
+        result = db.execute(text("""
+            SELECT 
+                table_schema,
+                table_name,
+                table_type
+            FROM information_schema.tables 
+            WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
+            ORDER BY table_schema, table_name
+        """))
+        
+        all_tables = []
+        for row in result:
+            all_tables.append({
+                "schema": row[0],
+                "table": row[1],
+                "type": row[2]
+            })
+        
+        # Ищем таблицы с сотрудниками в любых схемах
+        employee_tables = []
+        for table_info in all_tables:
+            table_name_lower = table_info["table"].lower()
+            if any(keyword in table_name_lower for keyword in ['employee', 'staff', 'worker', 'person']):
+                employee_tables.append(table_info)
+        
+        # Проверяем существование наших таблиц
+        our_tables_status = {}
+        table_variants = ['Employees', 'employees', 'Employee', 'employee',
+                         'Departments', 'departments', 'Department', 'department',
+                         'Cars', 'cars', 'Car', 'car',
+                         'Series', 'series', 'Serie', 'serie',
+                         'Employee_Series', 'employee_series', 'EmployeeSeries', 'employeeseries']
+        
+        for table_name in table_variants:
+            found = False
+            for table_info in all_tables:
+                if table_info["table"] == table_name:
+                    our_tables_status[table_name] = {
+                        "found": True,
+                        "schema": table_info["schema"],
+                        "type": table_info["type"]
+                    }
+                    found = True
+                    break
+            
+            if not found:
+                our_tables_status[table_name] = {
+                    "found": False,
+                    "schema": None,
+                    "type": None
                 }
-            )
         
-        columns = result.keys()
-        employee_dict = dict(zip(columns, employee))
+        return {
+            "database_connection": db_info,
+            "total_tables_found": len(all_tables),
+            "all_tables": all_tables,
+            "employee_related_tables": employee_tables,
+            "our_tables_status": {k: v for k, v in our_tables_status.items() if v["found"]},
+            "connection_url": str(engine.url).replace('Qa_2025!', '***')
+        }
         
-        # Преобразуем JSON строку в объект если нужно
-        if employee_dict.get('favorite_series') and isinstance(employee_dict['favorite_series'], str):
+    except Exception as e:
+        logger.error(f"Connection info error: {str(e)}", exc_info=True)
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+@app.get("/debug/query-table",
+         tags=["🔧 Диагностика"],
+         summary="Тестовый запрос к таблице")
+async def test_table_query(
+    table_name: str = Query(None, description="Имя таблицы для теста"),
+    schema_name: str = Query("public", description="Схема таблицы"),
+    limit: int = Query(5, ge=1, le=100, description="Лимит строк"),
+    db: Session = Depends(get_db)
+):
+    """Тестовый запрос к указанной таблице"""
+    try:
+        # Если имя таблицы не указано, показываем все таблицы
+        if not table_name:
+            inspector = inspect(engine)
+            tables = []
+            for schema in inspector.get_schema_names():
+                for table in inspector.get_table_names(schema=schema):
+                    tables.append(f"{schema}.{table}")
+            
+            return {
+                "available_tables": tables,
+                "message": "Specify table_name parameter to test a specific table"
+            }
+        
+        # Пробуем разные варианты запросов
+        queries = []
+        
+        # Вариант 1: со схемой и кавычками
+        queries.append(f'SELECT * FROM "{schema_name}"."{table_name}" LIMIT {limit}')
+        
+        # Вариант 2: со схемой без кавычек
+        queries.append(f'SELECT * FROM {schema_name}.{table_name} LIMIT {limit}')
+        
+        # Вариант 3: без схемы с кавычками
+        queries.append(f'SELECT * FROM "{table_name}" LIMIT {limit}')
+        
+        # Вариант 4: без схемы и кавычек
+        queries.append(f'SELECT * FROM {table_name} LIMIT {limit}')
+        
+        # Вариант 5: ищем таблицу без учета регистра
+        queries.append(f'SELECT * FROM information_schema.tables WHERE table_name ILIKE \'{table_name}\'')
+        
+        results = []
+        for sql in queries:
             try:
-                employee_dict['favorite_series'] = json.loads(employee_dict['favorite_series'])
-            except:
-                employee_dict['favorite_series'] = []
+                result = db.execute(text(sql))
+                columns = result.keys()
+                rows = []
+                for row in result:
+                    rows.append(dict(zip(columns, row)))
+                
+                results.append({
+                    "query": sql,
+                    "success": True,
+                    "columns": list(columns),
+                    "data": rows,
+                    "count": len(rows)
+                })
+                
+                # Если запрос успешен, возвращаем первый успешный результат
+                if rows:
+                    return results[-1]
+                    
+            except Exception as e:
+                results.append({
+                    "query": sql,
+                    "success": False,
+                    "error": str(e)
+                })
         
+        # Если все запросы не сработали
         return {
-            "data": employee_dict,
-            "metadata": {
-                "retrieved_at": datetime.now().isoformat(),
-                "employee_id": employee_id,
-                "has_favorite_series": bool(employee_dict.get('favorite_series'))
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching employee {employee_id}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-@app.post("/employees",
-          response_model=Dict[str, Any],
-          status_code=status.HTTP_201_CREATED,
-          tags=["👥 Сотрудники"],
-          summary="Создать нового сотрудника")
-async def create_employee(
-    employee: EmployeeCreate,
-    db: Session = Depends(get_db)
-):
-    try:
-        # Проверяем существование департамента
-        department_exists = db.execute(
-            text('SELECT id, name FROM "Departments" WHERE id = :id'),
-            {"id": employee.department_id}
-        ).fetchone()
-        
-        if not department_exists:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "Department not found",
-                    "department_id": employee.department_id,
-                    "message": f"Департамент с ID {employee.department_id} не существует",
-                    "available_departments": "GET /departments"
-                }
-            )
-        
-        # Проверяем существование автомобиля
-        car_exists = db.execute(
-            text('SELECT id, brand, model FROM "Cars" WHERE id = :id'),
-            {"id": employee.car_id}
-        ).fetchone()
-        
-        if not car_exists:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "Car not found",
-                    "car_id": employee.car_id,
-                    "message": f"Автомобиль с ID {employee.car_id} не существует",
-                    "available_cars": "GET /cars"
-                }
-            )
-        
-        # Создаем сотрудника
-        result = db.execute(text("""
-            INSERT INTO "Employees" 
-            (first_name, last_name, position, department_id, car_id)
-            VALUES 
-            (:first_name, :last_name, :position, :department_id, :car_id)
-            RETURNING 
-                id, 
-                first_name, 
-                last_name, 
-                position, 
-                department_id, 
-                car_id
-        """), employee.dict())
-        
-        db.commit()
-        
-        new_employee = result.fetchone()
-        columns = result.keys()
-        
-        return {
-            "status": "success",
-            "message": "Сотрудник успешно создан",
-            "data": dict(zip(columns, new_employee)),
-            "metadata": {
-                "created_at": datetime.now().isoformat(),
-                "department": department_exists[1],
-                "car": f"{car_exists[1]} {car_exists[2]}"
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except IntegrityError as e:
-        db.rollback()
-        logger.error(f"Integrity error creating employee: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Data integrity error. Check foreign key constraints."
-        )
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Unexpected error creating employee: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-@app.put("/employees/{employee_id}",
-         response_model=Dict[str, Any],
-         tags=["👥 Сотрудники"],
-         summary="Обновить сотрудника")
-async def update_employee(
-    employee_id: int,
-    employee: EmployeeCreate,
-    db: Session = Depends(get_db)
-):
-    try:
-        # Проверяем существование департамента
-        department_exists = db.execute(
-            text('SELECT id, name FROM "Departments" WHERE id = :id'),
-            {"id": employee.department_id}
-        ).fetchone()
-        
-        if not department_exists:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "Department not found",
-                    "department_id": employee.department_id,
-                }
-            )
-        
-        # Проверяем существование автомобиля
-        car_exists = db.execute(
-            text('SELECT id, brand, model FROM "Cars" WHERE id = :id'),
-            {"id": employee.car_id}
-        ).fetchone()
-        
-        if not car_exists:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "Car not found",
-                    "car_id": employee.car_id,
-                }
-            )
-        
-        # Обновляем сотрудника
-        result = db.execute(text("""
-            UPDATE "Employees" 
-            SET first_name = :first_name,
-                last_name = :last_name,
-                position = :position,
-                department_id = :department_id,
-                car_id = :car_id
-            WHERE id = :id
-            RETURNING 
-                id, 
-                first_name, 
-                last_name, 
-                position, 
-                department_id, 
-                car_id
-        """), {**employee.dict(), "id": employee_id})
-        
-        updated_employee = result.fetchone()
-        
-        if not updated_employee:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": "Employee not found",
-                    "employee_id": employee_id,
-                }
-            )
-        
-        db.commit()
-        
-        columns = result.keys()
-        
-        return {
-            "status": "success",
-            "message": "Сотрудник успешно обновлен",
-            "data": dict(zip(columns, updated_employee)),
-            "metadata": {
-                "updated_at": datetime.now().isoformat(),
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error updating employee {employee_id}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-@app.patch("/employees/{employee_id}",
-           response_model=Dict[str, Any],
-           tags=["👥 Сотрудники"],
-           summary="Частично обновить сотрудника")
-async def partial_update_employee(
-    employee_id: int,
-    employee_update: EmployeeUpdate,
-    db: Session = Depends(get_db)
-):
-    try:
-        update_data = employee_update.dict(exclude_unset=True)
-        
-        if not update_data:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No data provided for update"
-            )
-        
-        # Проверяем зависимости если они указаны
-        if 'department_id' in update_data:
-            department_exists = db.execute(
-                text('SELECT id FROM "Departments" WHERE id = :id'),
-                {"id": update_data['department_id']}
-            ).fetchone()
-            
-            if not department_exists:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": "Department not found",
-                        "department_id": update_data['department_id'],
-                    }
-                )
-        
-        if 'car_id' in update_data:
-            car_exists = db.execute(
-                text('SELECT id FROM "Cars" WHERE id = :id'),
-                {"id": update_data['car_id']}
-            ).fetchone()
-            
-            if not car_exists:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": "Car not found",
-                        "car_id": update_data['car_id'],
-                    }
-                )
-        
-        # Формируем SQL запрос
-        set_clauses = []
-        params = {"id": employee_id}
-        
-        for key, value in update_data.items():
-            if value is not None:
-                set_clauses.append(f'{key} = :{key}')
-                params[key] = value
-        
-        sql = f"""
-            UPDATE "Employees" 
-            SET {', '.join(set_clauses)}
-            WHERE id = :id
-            RETURNING 
-                id, 
-                first_name, 
-                last_name, 
-                position, 
-                department_id, 
-                car_id
-        """
-        
-        result = db.execute(text(sql), params)
-        updated_employee = result.fetchone()
-        
-        if not updated_employee:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": "Employee not found",
-                    "employee_id": employee_id,
-                }
-            )
-        
-        db.commit()
-        
-        columns = result.keys()
-        
-        return {
-            "status": "success",
-            "message": "Сотрудник успешно обновлен",
-            "data": dict(zip(columns, updated_employee)),
-            "metadata": {
-                "updated_at": datetime.now().isoformat(),
-                "updated_fields": list(update_data.keys())
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error partially updating employee {employee_id}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-@app.delete("/employees/{employee_id}",
-           response_model=Dict[str, Any],
-           tags=["👥 Сотрудники"],
-           summary="Удалить сотрудника")
-async def delete_employee(
-    employee_id: int,
-    db: Session = Depends(get_db)
-):
-    try:
-        # Получаем информацию о сотруднике перед удалением
-        employee_info = db.execute(
-            text("""
-                SELECT e.first_name, e.last_name, e.position,
-                       d.name as department_name
-                FROM "Employees" e
-                LEFT JOIN "Departments" d ON e.department_id = d.id
-                WHERE e.id = :id
-            """),
-            {"id": employee_id}
-        ).fetchone()
-        
-        if not employee_info:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": "Employee not found",
-                    "employee_id": employee_id,
-                    "message": f"Сотрудник с ID {employee_id} не найден",
-                    "suggestion": "Проверьте ID или получите список сотрудников: GET /employees"
-                }
-            )
-        
-        # Удаляем связи с сериалами
-        db.execute(
-            text('DELETE FROM "Employee_Series" WHERE employee_id = :id'),
-            {"id": employee_id}
-        )
-        
-        # Удаляем сотрудника
-        result = db.execute(
-            text('DELETE FROM "Employees" WHERE id = :id RETURNING id'),
-            {"id": employee_id}
-        )
-        
-        db.commit()
-        
-        deleted_id = result.scalar()
-        
-        return {
-            "status": "success",
-            "message": "Сотрудник успешно удален",
-            "deleted_employee": {
-                "id": deleted_id,
-                "name": f"{employee_info[0]} {employee_info[1]}",
-                "position": employee_info[2],
-                "department": employee_info[3]
-            },
-            "metadata": {
-                "deleted_at": datetime.now().isoformat(),
-                "employee_id": employee_id,
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error deleting employee {employee_id}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-# ========== ЭНДПОИНТЫ ДЛЯ ДЕПАРТАМЕНТОВ ==========
-
-@app.get("/departments",
-         response_model=Dict[str, Any],
-         tags=["🏢 Департаменты"],
-         summary="Получить список департаментов")
-async def get_departments(
-    page: int = Query(1, ge=1, description="Номер страницы"),
-    per_page: int = Query(20, ge=1, le=100, description="Количество записей на страницу"),
-    db: Session = Depends(get_db)
-):
-    try:
-        offset = (page - 1) * per_page
-        
-        sql = 'SELECT id, name FROM "Departments" ORDER BY id LIMIT :limit OFFSET :offset'
-        result = db.execute(text(sql), {"limit": per_page, "offset": offset})
-        
-        departments = [{"id": row[0], "name": row[1]} for row in result]
-        
-        total_count = db.execute(text('SELECT COUNT(*) FROM "Departments"')).scalar() or 0
-        total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
-        
-        return {
-            "meta": {
-                "page": page,
-                "per_page": per_page,
-                "total": total_count,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_prev": page > 1
-            },
-            "data": departments
+            "success": False,
+            "message": f"All query attempts failed for table '{table_name}'",
+            "attempted_queries": results,
+            "suggestion": "Check /debug/connection to see available tables"
         }
         
     except Exception as e:
-        logger.error(f"Error fetching departments: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error while fetching departments: {str(e)}"
-        )
-
-@app.get("/departments/{department_id}/employees",
-         tags=["🏢 Департаменты"],
-         summary="Получить сотрудников департамента")
-async def get_department_employees(
-    department_id: int,
-    page: int = Query(1, ge=1, description="Номер страницы"),
-    per_page: int = Query(20, ge=1, le=100, description="Количество записей на страницу"),
-    db: Session = Depends(get_db)
-):
-    try:
-        # Проверяем существование департамента
-        department_exists = db.execute(
-            text('SELECT name FROM "Departments" WHERE id = :id'),
-            {"id": department_id}
-        ).fetchone()
-        
-        if not department_exists:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": "Department not found",
-                    "department_id": department_id,
-                }
-            )
-        
-        offset = (page - 1) * per_page
-        
-        sql = """
-            SELECT 
-                e.id,
-                e.first_name,
-                e.last_name,
-                e.position,
-                e.car_id,
-                c.brand as car_brand,
-                c.model as car_model
-            FROM "Employees" e
-            LEFT JOIN "Cars" c ON e.car_id = c.id
-            WHERE e.department_id = :dept_id
-            ORDER BY e.id
-            LIMIT :limit OFFSET :offset
-        """
-        
-        result = db.execute(text(sql), {
-            "dept_id": department_id,
-            "limit": per_page,
-            "offset": offset
-        })
-        
-        employees = []
-        columns = result.keys()
-        for row in result:
-            employees.append(dict(zip(columns, row)))
-        
-        total_count = db.execute(
-            text('SELECT COUNT(*) FROM "Employees" WHERE department_id = :dept_id'),
-            {"dept_id": department_id}
-        ).scalar() or 0
-        
-        total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
-        
+        logger.error(f"Test query error: {str(e)}", exc_info=True)
         return {
-            "department": {
-                "id": department_id,
-                "name": department_exists[0]
-            },
-            "meta": {
-                "page": page,
-                "per_page": per_page,
-                "total": total_count,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_prev": page > 1
-            },
-            "data": employees
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
         }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching department employees: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
-        )
-
-# ========== ЭНДПОИНТЫ ДЛЯ АВТОМОБИЛЕЙ ==========
-
-@app.get("/cars",
-         response_model=Dict[str, Any],
-         tags=["🚗 Автомобили"],
-         summary="Получить список автомобилей")
-async def get_cars(
-    page: int = Query(1, ge=1, description="Номер страницы"),
-    per_page: int = Query(20, ge=1, le=100, description="Количество записей на страницу"),
-    search: Optional[str] = Query(None, description="Поиск по марке или модели"),
-    db: Session = Depends(get_db)
-):
-    try:
-        offset = (page - 1) * per_page
-        
-        sql = 'SELECT id, brand, model FROM "Cars"'
-        params = {"limit": per_page, "offset": offset}
-        
-        if search:
-            sql += ' WHERE brand ILIKE :search OR model ILIKE :search'
-            params["search"] = f"%{search}%"
-        
-        sql += ' ORDER BY id LIMIT :limit OFFSET :offset'
-        
-        result = db.execute(text(sql), params)
-        cars = [{"id": row[0], "brand": row[1], "model": row[2]} for row in result]
-        
-        count_sql = 'SELECT COUNT(*) FROM "Cars"'
-        if search:
-            count_sql += ' WHERE brand ILIKE :search OR model ILIKE :search'
-        
-        total_count = db.execute(
-            text(count_sql), 
-            {"search": params.get("search")} if search else {}
-        ).scalar() or 0
-        
-        total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
-        
-        return {
-            "meta": {
-                "page": page,
-                "per_page": per_page,
-                "total": total_count,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_prev": page > 1,
-                "filters": {
-                    "search": search
-                }
-            },
-            "data": cars
-        }
-        
-    except Exception as e:
-        logger.error(f"Error fetching cars: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error while fetching cars: {str(e)}"
-        )
-
-@app.get("/cars/{car_id}/employees",
-         tags=["🚗 Автомобили"],
-         summary="Получить сотрудников с автомобилем")
-async def get_car_employees(
-    car_id: int,
-    db: Session = Depends(get_db)
-):
-    try:
-        # Проверяем существование автомобиля
-        car_exists = db.execute(
-            text('SELECT brand, model FROM "Cars" WHERE id = :id'),
-            {"id": car_id}
-        ).fetchone()
-        
-        if not car_exists:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": "Car not found",
-                    "car_id": car_id,
-                }
-            )
-        
-        sql = """
-            SELECT 
-                e.id,
-                e.first_name,
-                e.last_name,
-                e.position,
-                e.department_id,
-                d.name as department_name
-            FROM "Employees" e
-            LEFT JOIN "Departments" d ON e.department_id = d.id
-            WHERE e.car_id = :car_id
-            ORDER BY e.id
-        """
-        
-        result = db.execute(text(sql), {"car_id": car_id})
-        
-        employees = []
-        columns = result.keys()
-        for row in result:
-            employees.append(dict(zip(columns, row)))
-        
-        return {
-            "car": {
-                "id": car_id,
-                "brand": car_exists[0],
-                "model": car_exists[1]
-            },
-            "employees": employees,
-            "count": len(employees)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching car employees: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
-        )
-
-# ========== ЭНДПОИНТЫ ДЛЯ СЕРИАЛОВ ==========
-
-@app.get("/series",
-         response_model=Dict[str, Any],
-         tags=["📺 Сериалы"],
-         summary="Получить список сериалов")
-async def get_series(
-    page: int = Query(1, ge=1, description="Номер страницы"),
-    per_page: int = Query(20, ge=1, le=100, description="Количество записей на страницу"),
-    min_rating: Optional[float] = Query(None, ge=0, le=10, description="Минимальный рейтинг"),
-    max_rating: Optional[float] = Query(None, ge=0, le=10, description="Максимальный рейтинг"),
-    search: Optional[str] = Query(None, description="Поиск по названию"),
-    db: Session = Depends(get_db)
-):
-    try:
-        offset = (page - 1) * per_page
-        
-        sql = 'SELECT id, title, rating FROM "Series"'
-        params = {"limit": per_page, "offset": offset}
-        conditions = []
-        
-        if min_rating is not None:
-            conditions.append("rating >= :min_rating")
-            params["min_rating"] = min_rating
-        
-        if max_rating is not None:
-            conditions.append("rating <= :max_rating")
-            params["max_rating"] = max_rating
-        
-        if search:
-            conditions.append("title ILIKE :search")
-            params["search"] = f"%{search}%"
-        
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
-        
-        sql += ' ORDER BY rating DESC, title LIMIT :limit OFFSET :offset'
-        
-        result = db.execute(text(sql), params)
-        series_list = [{"id": row[0], "title": row[1], "rating": float(row[2])} for row in result]
-        
-        count_sql = 'SELECT COUNT(*) FROM "Series"'
-        if conditions:
-            count_sql += " WHERE " + " AND ".join(conditions)
-        
-        total_count = db.execute(
-            text(count_sql), 
-            {k: v for k, v in params.items() if k in ["min_rating", "max_rating", "search"]}
-        ).scalar() or 0
-        
-        total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
-        
-        return {
-            "meta": {
-                "page": page,
-                "per_page": per_page,
-                "total": total_count,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_prev": page > 1,
-                "filters": {
-                    "min_rating": min_rating,
-                    "max_rating": max_rating,
-                    "search": search
-                }
-            },
-            "data": series_list
-        }
-        
-    except Exception as e:
-        logger.error(f"Error fetching series: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error while fetching series: {str(e)}"
-        )
-
-@app.get("/series/{series_id}/employees",
-         tags=["📺 Сериалы"],
-         summary="Получить сотрудников которые смотрят сериал")
-async def get_series_employees(
-    series_id: int,
-    db: Session = Depends(get_db)
-):
-    try:
-        # Проверяем существование сериала
-        series_exists = db.execute(
-            text('SELECT title, rating FROM "Series" WHERE id = :id'),
-            {"id": series_id}
-        ).fetchone()
-        
-        if not series_exists:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": "Series not found",
-                    "series_id": series_id,
-                }
-            )
-        
-        sql = """
-            SELECT 
-                e.id,
-                e.first_name,
-                e.last_name,
-                e.position,
-                e.department_id,
-                d.name as department_name,
-                e.car_id,
-                c.brand as car_brand,
-                c.model as car_model
-            FROM "Employees" e
-            LEFT JOIN "Departments" d ON e.department_id = d.id
-            LEFT JOIN "Cars" c ON e.car_id = c.id
-            JOIN "Employee_Series" es ON e.id = es.employee_id
-            WHERE es.series_id = :series_id
-            ORDER BY e.id
-        """
-        
-        result = db.execute(text(sql), {"series_id": series_id})
-        
-        employees = []
-        columns = result.keys()
-        for row in result:
-            employees.append(dict(zip(columns, row)))
-        
-        return {
-            "series": {
-                "id": series_id,
-                "title": series_exists[0],
-                "rating": float(series_exists[1])
-            },
-            "employees": employees,
-            "count": len(employees)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching series employees: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {str(e)}"
-        )
-
-# ========== ЭНДПОИНТЫ ДЛЯ ПОИСКА ==========
-
-@app.get("/search",
-         tags=["🔍 Поиск"],
-         summary="Поиск по всем данным")
-async def search_all(
-    query: str = Query(..., description="Поисковый запрос"),
-    limit: int = Query(20, ge=1, le=100, description="Количество результатов"),
-    db: Session = Depends(get_db)
-):
-    try:
-        results = {
-            "employees": [],
-            "departments": [],
-            "cars": [],
-            "series": []
-        }
-        
-        # Поиск по сотрудникам
-        try:
-            sql = """
-                SELECT 
-                    e.id,
-                    e.first_name,
-                    e.last_name,
-                    e.position,
-                    e.department_id,
-                    d.name as department_name,
-                    e.car_id,
-                    c.brand as car_brand,
-                    c.model as car_model
-                FROM "Employees" e
-                LEFT JOIN "Departments" d ON e.department_id = d.id
-                LEFT JOIN "Cars" c ON e.car_id = c.id
-                WHERE e.first_name ILIKE :query 
-                   OR e.last_name ILIKE :query 
-                   OR e.position ILIKE :query
-                LIMIT :limit
-            """
-            
-            result = db.execute(text(sql), {"query": f"%{query}%", "limit": limit})
-            columns = result.keys()
-            for row in result:
-                results["employees"].append(dict(zip(columns, row)))
-        except Exception as e:
-            logger.warning(f"Search employees error: {str(e)}")
-        
-        # Поиск по департаментам
-        try:
-            sql = 'SELECT id, name FROM "Departments" WHERE name ILIKE :query LIMIT :limit'
-            result = db.execute(text(sql), {"query": f"%{query}%", "limit": limit})
-            for row in result:
-                results["departments"].append({"id": row[0], "name": row[1]})
-        except Exception as e:
-            logger.warning(f"Search departments error: {str(e)}")
-        
-        # Поиск по автомобилям
-        try:
-            sql = 'SELECT id, brand, model FROM "Cars" WHERE brand ILIKE :query OR model ILIKE :query LIMIT :limit'
-            result = db.execute(text(sql), {"query": f"%{query}%", "limit": limit})
-            for row in result:
-                results["cars"].append({"id": row[0], "brand": row[1], "model": row[2]})
-        except Exception as e:
-            logger.warning(f"Search cars error: {str(e)}")
-        
-        # Поиск по сериалам
-        try:
-            sql = 'SELECT id, title, rating FROM "Series" WHERE title ILIKE :query LIMIT :limit'
-            result = db.execute(text(sql), {"query": f"%{query}%", "limit": limit})
-            for row in result:
-                results["series"].append({"id": row[0], "title": row[1], "rating": float(row[2])})
-        except Exception as e:
-            logger.warning(f"Search series error: {str(e)}")
-        
-        total_results = sum(len(v) for v in results.values())
-        
-        return {
-            "query": query,
-            "total_results": total_results,
-            "results": results
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in search: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Search error: {str(e)}"
-        )
 
 # ========== ТЕСТОВЫЕ ЭНДПОИНТЫ ==========
 
+@app.get("/test/employees",
+         tags=["🧪 Тестирование", "👥 Сотрудники"],
+         summary="Тестовый запрос сотрудников")
+async def test_employees(db: Session = Depends(get_db)):
+    """Тестовый запрос для проверки данных о сотрудниках"""
+    try:
+        # Сначала найдем таблицу с сотрудниками
+        inspector = inspect(engine)
+        tables = inspector.get_table_names(schema="public")
+        
+        employee_table = None
+        for table in tables:
+            if any(keyword in table.lower() for keyword in ['employee', 'staff', 'worker']):
+                employee_table = table
+                break
+        
+        if not employee_table:
+            return {
+                "status": "warning",
+                "message": "No employee table found",
+                "available_tables": tables,
+                "data": []
+            }
+        
+        # Пробуем простой запрос
+        sql = f"SELECT * FROM {employee_table} LIMIT 5"
+        result = db.execute(text(sql))
+        
+        employees = []
+        columns = result.keys()
+        for row in result:
+            employees.append(dict(zip(columns, row)))
+        
+        return {
+            "status": "success",
+            "table_used": employee_table,
+            "columns": list(columns),
+            "data": employees,
+            "count": len(employees)
+        }
+        
+    except Exception as e:
+        logger.error(f"Test employees error: {str(e)}", exc_info=True)
+        return {
+            "status": "error",
+            "error": str(e),
+            "data": []
+        }
+
 @app.get("/test/query",
          tags=["🧪 Тестирование"],
-         summary="Тестовый SQL запрос")
-async def test_query(db: Session = Depends(get_db)):
+         summary="Пример сложного SQL запроса")
+async def test_complex_query(db: Session = Depends(get_db)):
     """Пример сложного SQL запроса для обучения"""
     try:
+        # Простой тестовый запрос
         sql = """
             SELECT 
-                e.first_name, 
-                e.last_name, 
-                d.name AS department, 
-                c.brand AS car_brand, 
-                c.model AS car_model,
-                s.title as favorite_series,
-                s.rating
-            FROM "Employees" e
-            JOIN "Departments" d ON e.department_id = d.id
-            JOIN "Cars" c ON e.car_id = c.id
-            LEFT JOIN "Employee_Series" es ON e.id = es.employee_id
-            LEFT JOIN "Series" s ON es.series_id = s.id
-            WHERE s.title = 'Теория большого взрыва'
-            OR s.title IS NULL
-            ORDER BY e.id
+                table_schema,
+                table_name,
+                table_type
+            FROM information_schema.tables 
+            WHERE table_schema = 'public'
+            ORDER BY table_name
             LIMIT 10
         """
         
@@ -1568,18 +736,85 @@ async def test_query(db: Session = Depends(get_db)):
         data = [dict(zip(columns, row)) for row in result]
         
         return {
-            "query": "Пример сложного SQL запроса с JOIN",
-            "description": "Находит сотрудников, которые смотрят 'Теорию большого взрыва'",
+            "query": "Показывает таблицы в схеме public",
+            "description": "Пример SQL запроса к information_schema",
             "data": data,
             "count": len(data)
         }
         
     except Exception as e:
-        logger.error(f"Error in test query: {str(e)}", exc_info=True)
+        logger.error(f"Test query error: {str(e)}", exc_info=True)
         return {
             "error": str(e),
             "query": sql if 'sql' in locals() else "N/A"
         }
+
+# ========== УНИВЕРСАЛЬНЫЕ ЭНДПОИНТЫ ==========
+
+@app.get("/data/{table_name}",
+         tags=["🔍 Поиск"],
+         summary="Получить данные из любой таблицы")
+async def get_table_data(
+    table_name: str,
+    page: int = Query(1, ge=1, description="Номер страницы"),
+    per_page: int = Query(20, ge=1, le=100, description="Количество записей на страницу"),
+    db: Session = Depends(get_db)
+):
+    """Универсальный эндпоинт для получения данных из любой таблицы"""
+    try:
+        offset = (page - 1) * per_page
+        
+        # Пробуем получить данные из таблицы
+        try:
+            sql = f"SELECT * FROM {table_name} LIMIT :limit OFFSET :offset"
+            result = db.execute(text(sql), {"limit": per_page, "offset": offset})
+            columns = result.keys()
+            data = [dict(zip(columns, row)) for row in result]
+            
+            # Получаем общее количество
+            count_sql = f"SELECT COUNT(*) FROM {table_name}"
+            total_count = db.execute(text(count_sql)).scalar() or 0
+            
+        except:
+            # Пробуем с кавычками
+            sql = f'SELECT * FROM "{table_name}" LIMIT :limit OFFSET :offset'
+            result = db.execute(text(sql), {"limit": per_page, "offset": offset})
+            columns = result.keys()
+            data = [dict(zip(columns, row)) for row in result]
+            
+            # Получаем общее количество
+            count_sql = f'SELECT COUNT(*) FROM "{table_name}"'
+            total_count = db.execute(text(count_sql)).scalar() or 0
+        
+        total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
+        
+        return {
+            "meta": {
+                "table": table_name,
+                "page": page,
+                "per_page": per_page,
+                "total": total_count,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_prev": page > 1
+            },
+            "columns": list(columns),
+            "data": data
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting table data: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "Table not found or inaccessible",
+                "table_name": table_name,
+                "message": str(e),
+                "suggestion": "Check available tables at /debug/connection"
+            }
+        )
+
+# ========== ЭНДПОИНТЫ ДЛЯ ОБУЧЕНИЯ ==========
 
 @app.get("/test-cors",
          tags=["🧪 Тестирование"],
@@ -1626,55 +861,50 @@ async def learning_http_status(
             detail=f"Unknown status code. Available: {', '.join(map(str, status_examples.keys()))}"
         )
 
-# ========== ДИАГНОСТИЧЕСКИЕ ЭНДПОИНТЫ ==========
-
-@app.get("/debug/tables",
-         tags=["🔧 Диагностика"],
-         summary="Информация о таблицах в базе данных")
-async def debug_tables(db: Session = Depends(get_db)):
-    """Показывает все таблицы в базе данных"""
-    try:
-        inspector = inspect(engine)
-        tables = inspector.get_table_names(schema="public")
-        
-        table_info = {}
-        for table_name in tables:
-            try:
-                columns = inspector.get_columns(table_name)
-                column_info = []
-                
-                for col in columns:
-                    column_info.append({
-                        "name": col['name'],
-                        "type": str(col['type']),
-                        "nullable": col.get('nullable', True)
-                    })
-                
-                table_info[table_name] = {
-                    "columns": column_info,
-                    "row_count": db.execute(text(f'SELECT COUNT(*) FROM "{table_name}"')).scalar()
-                }
-                
-            except Exception as e:
-                table_info[table_name] = {
-                    "error": str(e),
-                    "columns": [],
-                    "row_count": None
-                }
-        
-        return {
-            "database": engine.url.database,
-            "total_tables": len(tables),
-            "tables": tables,
-            "table_details": table_info
+@app.get("/learning/http-methods",
+         tags=["🎓 Обучение"],
+         summary="Примеры HTTP методов")
+async def learning_http_methods():
+    return {
+        "title": "🎓 Изучение HTTP методов",
+        "methods": {
+            "GET": {
+                "description": "Получение данных",
+                "use_case": "Получение списка сотрудников, информации о сотруднике",
+                "example": "GET /employees, GET /employees/1",
+                "idempotent": True,
+                "safe": True
+            },
+            "POST": {
+                "description": "Создание новых данных",
+                "use_case": "Создание нового сотрудника",
+                "example": "POST /employees",
+                "idempotent": False,
+                "safe": False
+            },
+            "PUT": {
+                "description": "Полное обновление данных",
+                "use_case": "Полное обновление информации о сотруднике",
+                "example": "PUT /employees/1",
+                "idempotent": True,
+                "safe": False
+            },
+            "PATCH": {
+                "description": "Частичное обновление данных",
+                "use_case": "Частичное обновление информации о сотруднике",
+                "example": "PATCH /employees/1",
+                "idempotent": False,
+                "safe": False
+            },
+            "DELETE": {
+                "description": "Удаление данных",
+                "use_case": "Удаление сотрудника",
+                "example": "DELETE /employees/1",
+                "idempotent": True,
+                "safe": False
+            }
         }
-        
-    except Exception as e:
-        logger.error(f"Debug tables error: {str(e)}", exc_info=True)
-        return {
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
+    }
 
 # ========== ОБРАБОТЧИК OPTIONS ==========
 
@@ -1762,17 +992,20 @@ if __name__ == "__main__":
     print(f"📚 ReDoc:        https://company-api-4pws.onrender.com/redoc")
     print(f"🔧 Health:       https://company-api-4pws.onrender.com/health")
     print("-" * 70)
-    print("📊 ОСНОВНЫЕ ЭНДПОИНТЫ:")
-    print("GET  /employees               - Список сотрудников")
-    print("GET  /employees/{id}          - Сотрудник по ID")
-    print("POST /employees               - Создать сотрудника")
-    print("PUT  /employees/{id}          - Обновить сотрудника")
-    print("GET  /departments             - Список отделов")
-    print("GET  /cars                    - Список автомобилей")
-    print("GET  /series                  - Список сериалов")
-    print("GET  /search?query=текст      - Поиск по всем данным")
-    print("GET  /test/query              - Пример сложного SQL запроса")
-    print("GET  /debug/tables            - Диагностика таблиц БД")
+    print("🔍 ДИАГНОСТИЧЕСКИЕ ЭНДПОИНТЫ:")
+    print("GET /health                    - Проверка работоспособности")
+    print("GET /debug/connection          - Диагностика подключения к БД")
+    print("GET /debug/query-table         - Тестовые запросы к таблицам")
+    print("GET /data/{table_name}         - Данные из любой таблицы")
+    print("-" * 70)
+    print("🧪 ТЕСТОВЫЕ ЭНДПОИНТЫ:")
+    print("GET /test/employees            - Тестовый запрос сотрудников")
+    print("GET /test/query                - Пример SQL запроса")
+    print("GET /test-cors                 - Тест CORS настроек")
+    print("-" * 70)
+    print("🎓 ОБУЧАЮЩИЕ ЭНДПОИНТЫ:")
+    print("GET /learning/http-status      - Примеры HTTP статусов")
+    print("GET /learning/http-methods     - Примеры HTTP методов")
     print("=" * 70)
     
     uvicorn.run(
