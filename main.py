@@ -448,9 +448,9 @@ async def health_check(db: Session = Depends(get_db)):
         tables = inspector.get_table_names(schema="public")
         
         stats = {}
-        for table in ['employees', 'departments', 'cars', 'series']:
+        for table in ['Employees', 'Departments', 'Cars', 'Series']:
             try:
-                result = db.execute(text(f"SELECT COUNT(*) FROM {table}"))
+                result = db.execute(text(f'SELECT COUNT(*) FROM "{table}"'))
                 count = result.scalar()
                 stats[table] = count
             except:
@@ -528,7 +528,7 @@ async def get_employees(
         
         offset = (page - 1) * per_page
         
-        # Основной SQL запрос
+        # Основной SQL запрос - используем правильные имена таблиц с кавычками
         sql = """
             SELECT 
                 e.id,
@@ -540,9 +540,9 @@ async def get_employees(
                 d.name as department_name,
                 c.brand as car_brand,
                 c.model as car_model
-            FROM employees e
-            LEFT JOIN departments d ON e.department_id = d.id
-            LEFT JOIN cars c ON e.car_id = c.id
+            FROM "Employees" e
+            LEFT JOIN "Departments" d ON e.department_id = d.id
+            LEFT JOIN "Cars" c ON e.car_id = c.id
         """
         
         params = {"limit": per_page, "offset": offset}
@@ -568,7 +568,7 @@ async def get_employees(
         employees = [dict(zip(columns, row)) for row in result]
         
         # Получаем общее количество
-        count_sql = "SELECT COUNT(*) FROM employees e"
+        count_sql = 'SELECT COUNT(*) FROM "Employees" e'
         if conditions:
             count_sql += " WHERE " + " AND ".join(conditions)
         
@@ -637,13 +637,13 @@ async def get_employee(
                         'title', s.title,
                         'rating', s.rating
                     ))
-                    FROM employee_series es
-                    JOIN series s ON es.series_id = s.id
+                    FROM "Employee_Series" es
+                    JOIN "Series" s ON es.series_id = s.id
                     WHERE es.employee_id = e.id
                 ) as favorite_series
-            FROM employees e
-            LEFT JOIN departments d ON e.department_id = d.id
-            LEFT JOIN cars c ON e.car_id = c.id
+            FROM "Employees" e
+            LEFT JOIN "Departments" d ON e.department_id = d.id
+            LEFT JOIN "Cars" c ON e.car_id = c.id
             WHERE e.id = :id
         """), {"id": employee_id})
         
@@ -700,7 +700,7 @@ async def create_employee(
     try:
         # Проверяем существование департамента
         department_exists = db.execute(
-            text("SELECT id, name FROM departments WHERE id = :id"),
+            text('SELECT id, name FROM "Departments" WHERE id = :id'),
             {"id": employee.department_id}
         ).fetchone()
         
@@ -717,7 +717,7 @@ async def create_employee(
         
         # Проверяем существование автомобиля
         car_exists = db.execute(
-            text("SELECT id, brand, model FROM cars WHERE id = :id"),
+            text('SELECT id, brand, model FROM "Cars" WHERE id = :id'),
             {"id": employee.car_id}
         ).fetchone()
         
@@ -734,7 +734,7 @@ async def create_employee(
         
         # Создаем сотрудника
         result = db.execute(text("""
-            INSERT INTO employees 
+            INSERT INTO "Employees" 
             (first_name, last_name, position, department_id, car_id)
             VALUES 
             (:first_name, :last_name, :position, :department_id, :car_id)
@@ -792,7 +792,7 @@ async def update_employee(
     try:
         # Проверяем существование департамента
         department_exists = db.execute(
-            text("SELECT id, name FROM departments WHERE id = :id"),
+            text('SELECT id, name FROM "Departments" WHERE id = :id'),
             {"id": employee.department_id}
         ).fetchone()
         
@@ -807,7 +807,7 @@ async def update_employee(
         
         # Проверяем существование автомобиля
         car_exists = db.execute(
-            text("SELECT id, brand, model FROM cars WHERE id = :id"),
+            text('SELECT id, brand, model FROM "Cars" WHERE id = :id'),
             {"id": employee.car_id}
         ).fetchone()
         
@@ -822,7 +822,7 @@ async def update_employee(
         
         # Обновляем сотрудника
         result = db.execute(text("""
-            UPDATE employees 
+            UPDATE "Employees" 
             SET first_name = :first_name,
                 last_name = :last_name,
                 position = :position,
@@ -893,7 +893,7 @@ async def partial_update_employee(
         # Проверяем зависимости если они указаны
         if 'department_id' in update_data:
             department_exists = db.execute(
-                text("SELECT id FROM departments WHERE id = :id"),
+                text('SELECT id FROM "Departments" WHERE id = :id'),
                 {"id": update_data['department_id']}
             ).fetchone()
             
@@ -908,7 +908,7 @@ async def partial_update_employee(
         
         if 'car_id' in update_data:
             car_exists = db.execute(
-                text("SELECT id FROM cars WHERE id = :id"),
+                text('SELECT id FROM "Cars" WHERE id = :id'),
                 {"id": update_data['car_id']}
             ).fetchone()
             
@@ -927,11 +927,11 @@ async def partial_update_employee(
         
         for key, value in update_data.items():
             if value is not None:
-                set_clauses.append(f"{key} = :{key}")
+                set_clauses.append(f'{key} = :{key}')
                 params[key] = value
         
         sql = f"""
-            UPDATE employees 
+            UPDATE "Employees" 
             SET {', '.join(set_clauses)}
             WHERE id = :id
             RETURNING 
@@ -993,8 +993,8 @@ async def delete_employee(
             text("""
                 SELECT e.first_name, e.last_name, e.position,
                        d.name as department_name
-                FROM employees e
-                LEFT JOIN departments d ON e.department_id = d.id
+                FROM "Employees" e
+                LEFT JOIN "Departments" d ON e.department_id = d.id
                 WHERE e.id = :id
             """),
             {"id": employee_id}
@@ -1013,13 +1013,13 @@ async def delete_employee(
         
         # Удаляем связи с сериалами
         db.execute(
-            text("DELETE FROM employee_series WHERE employee_id = :id"),
+            text('DELETE FROM "Employee_Series" WHERE employee_id = :id'),
             {"id": employee_id}
         )
         
         # Удаляем сотрудника
         result = db.execute(
-            text("DELETE FROM employees WHERE id = :id RETURNING id"),
+            text('DELETE FROM "Employees" WHERE id = :id RETURNING id'),
             {"id": employee_id}
         )
         
@@ -1066,12 +1066,12 @@ async def get_departments(
     try:
         offset = (page - 1) * per_page
         
-        sql = "SELECT id, name FROM departments ORDER BY id LIMIT :limit OFFSET :offset"
+        sql = 'SELECT id, name FROM "Departments" ORDER BY id LIMIT :limit OFFSET :offset'
         result = db.execute(text(sql), {"limit": per_page, "offset": offset})
         
         departments = [{"id": row[0], "name": row[1]} for row in result]
         
-        total_count = db.execute(text("SELECT COUNT(*) FROM departments")).scalar() or 0
+        total_count = db.execute(text('SELECT COUNT(*) FROM "Departments"')).scalar() or 0
         total_pages = (total_count + per_page - 1) // per_page if total_count > 0 else 1
         
         return {
@@ -1105,7 +1105,7 @@ async def get_department_employees(
     try:
         # Проверяем существование департамента
         department_exists = db.execute(
-            text("SELECT name FROM departments WHERE id = :id"),
+            text('SELECT name FROM "Departments" WHERE id = :id'),
             {"id": department_id}
         ).fetchone()
         
@@ -1129,8 +1129,8 @@ async def get_department_employees(
                 e.car_id,
                 c.brand as car_brand,
                 c.model as car_model
-            FROM employees e
-            LEFT JOIN cars c ON e.car_id = c.id
+            FROM "Employees" e
+            LEFT JOIN "Cars" c ON e.car_id = c.id
             WHERE e.department_id = :dept_id
             ORDER BY e.id
             LIMIT :limit OFFSET :offset
@@ -1148,7 +1148,7 @@ async def get_department_employees(
             employees.append(dict(zip(columns, row)))
         
         total_count = db.execute(
-            text("SELECT COUNT(*) FROM employees WHERE department_id = :dept_id"),
+            text('SELECT COUNT(*) FROM "Employees" WHERE department_id = :dept_id'),
             {"dept_id": department_id}
         ).scalar() or 0
         
@@ -1194,21 +1194,21 @@ async def get_cars(
     try:
         offset = (page - 1) * per_page
         
-        sql = "SELECT id, brand, model FROM cars"
+        sql = 'SELECT id, brand, model FROM "Cars"'
         params = {"limit": per_page, "offset": offset}
         
         if search:
-            sql += " WHERE brand ILIKE :search OR model ILIKE :search"
+            sql += ' WHERE brand ILIKE :search OR model ILIKE :search'
             params["search"] = f"%{search}%"
         
-        sql += " ORDER BY id LIMIT :limit OFFSET :offset"
+        sql += ' ORDER BY id LIMIT :limit OFFSET :offset'
         
         result = db.execute(text(sql), params)
         cars = [{"id": row[0], "brand": row[1], "model": row[2]} for row in result]
         
-        count_sql = "SELECT COUNT(*) FROM cars"
+        count_sql = 'SELECT COUNT(*) FROM "Cars"'
         if search:
-            count_sql += " WHERE brand ILIKE :search OR model ILIKE :search"
+            count_sql += ' WHERE brand ILIKE :search OR model ILIKE :search'
         
         total_count = db.execute(
             text(count_sql), 
@@ -1249,7 +1249,7 @@ async def get_car_employees(
     try:
         # Проверяем существование автомобиля
         car_exists = db.execute(
-            text("SELECT brand, model FROM cars WHERE id = :id"),
+            text('SELECT brand, model FROM "Cars" WHERE id = :id'),
             {"id": car_id}
         ).fetchone()
         
@@ -1270,8 +1270,8 @@ async def get_car_employees(
                 e.position,
                 e.department_id,
                 d.name as department_name
-            FROM employees e
-            LEFT JOIN departments d ON e.department_id = d.id
+            FROM "Employees" e
+            LEFT JOIN "Departments" d ON e.department_id = d.id
             WHERE e.car_id = :car_id
             ORDER BY e.id
         """
@@ -1319,7 +1319,7 @@ async def get_series(
     try:
         offset = (page - 1) * per_page
         
-        sql = "SELECT id, title, rating FROM series"
+        sql = 'SELECT id, title, rating FROM "Series"'
         params = {"limit": per_page, "offset": offset}
         conditions = []
         
@@ -1338,12 +1338,12 @@ async def get_series(
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
         
-        sql += " ORDER BY rating DESC, title LIMIT :limit OFFSET :offset"
+        sql += ' ORDER BY rating DESC, title LIMIT :limit OFFSET :offset'
         
         result = db.execute(text(sql), params)
         series_list = [{"id": row[0], "title": row[1], "rating": float(row[2])} for row in result]
         
-        count_sql = "SELECT COUNT(*) FROM series"
+        count_sql = 'SELECT COUNT(*) FROM "Series"'
         if conditions:
             count_sql += " WHERE " + " AND ".join(conditions)
         
@@ -1388,7 +1388,7 @@ async def get_series_employees(
     try:
         # Проверяем существование сериала
         series_exists = db.execute(
-            text("SELECT title, rating FROM series WHERE id = :id"),
+            text('SELECT title, rating FROM "Series" WHERE id = :id'),
             {"id": series_id}
         ).fetchone()
         
@@ -1412,10 +1412,10 @@ async def get_series_employees(
                 e.car_id,
                 c.brand as car_brand,
                 c.model as car_model
-            FROM employees e
-            LEFT JOIN departments d ON e.department_id = d.id
-            LEFT JOIN cars c ON e.car_id = c.id
-            JOIN employee_series es ON e.id = es.employee_id
+            FROM "Employees" e
+            LEFT JOIN "Departments" d ON e.department_id = d.id
+            LEFT JOIN "Cars" c ON e.car_id = c.id
+            JOIN "Employee_Series" es ON e.id = es.employee_id
             WHERE es.series_id = :series_id
             ORDER BY e.id
         """
@@ -1477,9 +1477,9 @@ async def search_all(
                     e.car_id,
                     c.brand as car_brand,
                     c.model as car_model
-                FROM employees e
-                LEFT JOIN departments d ON e.department_id = d.id
-                LEFT JOIN cars c ON e.car_id = c.id
+                FROM "Employees" e
+                LEFT JOIN "Departments" d ON e.department_id = d.id
+                LEFT JOIN "Cars" c ON e.car_id = c.id
                 WHERE e.first_name ILIKE :query 
                    OR e.last_name ILIKE :query 
                    OR e.position ILIKE :query
@@ -1490,35 +1490,35 @@ async def search_all(
             columns = result.keys()
             for row in result:
                 results["employees"].append(dict(zip(columns, row)))
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Search employees error: {str(e)}")
         
         # Поиск по департаментам
         try:
-            sql = "SELECT id, name FROM departments WHERE name ILIKE :query LIMIT :limit"
+            sql = 'SELECT id, name FROM "Departments" WHERE name ILIKE :query LIMIT :limit'
             result = db.execute(text(sql), {"query": f"%{query}%", "limit": limit})
             for row in result:
                 results["departments"].append({"id": row[0], "name": row[1]})
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Search departments error: {str(e)}")
         
         # Поиск по автомобилям
         try:
-            sql = "SELECT id, brand, model FROM cars WHERE brand ILIKE :query OR model ILIKE :query LIMIT :limit"
+            sql = 'SELECT id, brand, model FROM "Cars" WHERE brand ILIKE :query OR model ILIKE :query LIMIT :limit'
             result = db.execute(text(sql), {"query": f"%{query}%", "limit": limit})
             for row in result:
                 results["cars"].append({"id": row[0], "brand": row[1], "model": row[2]})
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Search cars error: {str(e)}")
         
         # Поиск по сериалам
         try:
-            sql = "SELECT id, title, rating FROM series WHERE title ILIKE :query LIMIT :limit"
+            sql = 'SELECT id, title, rating FROM "Series" WHERE title ILIKE :query LIMIT :limit'
             result = db.execute(text(sql), {"query": f"%{query}%", "limit": limit})
             for row in result:
                 results["series"].append({"id": row[0], "title": row[1], "rating": float(row[2])})
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Search series error: {str(e)}")
         
         total_results = sum(len(v) for v in results.values())
         
@@ -1552,11 +1552,11 @@ async def test_query(db: Session = Depends(get_db)):
                 c.model AS car_model,
                 s.title as favorite_series,
                 s.rating
-            FROM employees e
-            JOIN departments d ON e.department_id = d.id
-            JOIN cars c ON e.car_id = c.id
-            LEFT JOIN employee_series es ON e.id = es.employee_id
-            LEFT JOIN series s ON es.series_id = s.id
+            FROM "Employees" e
+            JOIN "Departments" d ON e.department_id = d.id
+            JOIN "Cars" c ON e.car_id = c.id
+            LEFT JOIN "Employee_Series" es ON e.id = es.employee_id
+            LEFT JOIN "Series" s ON es.series_id = s.id
             WHERE s.title = 'Теория большого взрыва'
             OR s.title IS NULL
             ORDER BY e.id
@@ -1625,6 +1625,56 @@ async def learning_http_status(
             status_code=400,
             detail=f"Unknown status code. Available: {', '.join(map(str, status_examples.keys()))}"
         )
+
+# ========== ДИАГНОСТИЧЕСКИЕ ЭНДПОИНТЫ ==========
+
+@app.get("/debug/tables",
+         tags=["🔧 Диагностика"],
+         summary="Информация о таблицах в базе данных")
+async def debug_tables(db: Session = Depends(get_db)):
+    """Показывает все таблицы в базе данных"""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names(schema="public")
+        
+        table_info = {}
+        for table_name in tables:
+            try:
+                columns = inspector.get_columns(table_name)
+                column_info = []
+                
+                for col in columns:
+                    column_info.append({
+                        "name": col['name'],
+                        "type": str(col['type']),
+                        "nullable": col.get('nullable', True)
+                    })
+                
+                table_info[table_name] = {
+                    "columns": column_info,
+                    "row_count": db.execute(text(f'SELECT COUNT(*) FROM "{table_name}"')).scalar()
+                }
+                
+            except Exception as e:
+                table_info[table_name] = {
+                    "error": str(e),
+                    "columns": [],
+                    "row_count": None
+                }
+        
+        return {
+            "database": engine.url.database,
+            "total_tables": len(tables),
+            "tables": tables,
+            "table_details": table_info
+        }
+        
+    except Exception as e:
+        logger.error(f"Debug tables error: {str(e)}", exc_info=True)
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
 
 # ========== ОБРАБОТЧИК OPTIONS ==========
 
@@ -1722,6 +1772,7 @@ if __name__ == "__main__":
     print("GET  /series                  - Список сериалов")
     print("GET  /search?query=текст      - Поиск по всем данным")
     print("GET  /test/query              - Пример сложного SQL запроса")
+    print("GET  /debug/tables            - Диагностика таблиц БД")
     print("=" * 70)
     
     uvicorn.run(
